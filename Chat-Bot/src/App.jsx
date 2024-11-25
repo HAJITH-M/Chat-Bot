@@ -2,43 +2,43 @@ import React, { useState } from 'react';
 import axios from 'axios';
 
 const App = () => {
-  const [message, setMessage] = useState('');  // URL to scrape
-  const [response, setResponse] = useState('');  // Response from the server
-  const [loading, setLoading] = useState(false);  // Loading state
-  const [error, setError] = useState('');  // Error message state
+  const [message, setMessage] = useState(''); // URL to scrape
+  const [response, setResponse] = useState(''); // Response to display from server
+  const [loading, setLoading] = useState(false); // Show loading state
+  const [error, setError] = useState(''); // For handling errors
 
+  // Send the URL to the backend server for scraping
   const handleSendMessage = async () => {
     if (!message) {
       setError('Please enter a valid URL');
-      return;
+      return; // Prevent request if the URL is empty
     }
-  
-    setError('');
-    setLoading(true);
-    console.log('Sending request with URL:', message);
-  
+
+    setError(''); // Clear any previous errors
+    setLoading(true); // Show loading indicator
+    console.log('Sending request with URL:', message); // Log the URL being sent
+
     try {
-      const res = await axios.post('http://localhost:5000/scrape', { url: message });
-      console.log('Received response:', res.data);
-  
-      if (res.data && Array.isArray(res.data.content)) {
-        setResponse(res.data.content.length ? res.data.content.join('\n') : 'No content found.');
-      } else {
-        setResponse('Error: Invalid response format.');
-      }
+      // Send URL to backend for scraping
+      const res = await axios.post('http://localhost:5000/scrape', {
+        url: message,
+      });
+
+      console.log('Received response:', res.data);  // Log the response from the server
+      setResponse(res.data.content.join('\n')); // Display the scraped content
     } catch (error) {
-      console.error('Error during API call:', error);
+      console.error('Error during API call:', error); // Log any errors
       setError('Error while scraping. Please try again later.');
-      setResponse('');
+      setResponse(''); // Clear the previous response if there's an error
     } finally {
-      setLoading(false);
+      setLoading(false); // Hide loading indicator
     }
   };
-  
+
   return (
     <div className="App">
       <h1>Web Scraping Chatbot</h1>
-      
+
       <div>
         <input
           type="text"
@@ -54,7 +54,7 @@ const App = () => {
       {/* Error Handling */}
       {error && <div style={{ color: 'red' }}>{error}</div>}
 
-      {/* Display Scraped Content */}
+      {/* Display scraped content or an error message */}
       <div>
         <p>Response:</p>
         <pre>{response}</pre>
