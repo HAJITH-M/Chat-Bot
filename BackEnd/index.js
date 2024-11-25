@@ -64,7 +64,13 @@ app.post('/scrape', async (req, res) => {
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
     // Go to the provided URL and wait for the content to load
-    await page.goto(targetUrl, { waitUntil: 'networkidle2' });
+    const response = await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    
+    if (response && response.status() !== 200) {
+      console.log(`Failed to load page: ${targetUrl} with status: ${response.status()}`);
+      return res.status(500).json({ content: ['Failed to load page.'] });
+    }
+    
     await page.waitForSelector('body');  // Wait for body tag to load
 
     // Scrape all internal links from the page
@@ -90,14 +96,23 @@ app.post('/scrape', async (req, res) => {
         // Check if the link belongs to the same domain as the target URL
         const parsedLink = url.parse(absoluteLink);
         if (parsedLink.hostname === url.parse(targetUrl).hostname) {
-          const newPage = await browser.newPage();
-          await newPage.goto(absoluteLink, { waitUntil: 'networkidle2' });
+          try {
+            const newPage = await browser.newPage();
+            const newPageResponse = await newPage.goto(absoluteLink, { waitUntil: 'networkidle2', timeout: 60000 });
+            
+            if (newPageResponse && newPageResponse.status() !== 200) {
+              console.log(`Failed to load internal link: ${absoluteLink}`);
+              continue; // Skip the link if it's not loading properly
+            }
 
-          // Scrape content from this new page (all text from the body)
-          const pageContent = await scrapePageContent(newPage);
-          allContent.push(pageContent);
+            // Scrape content from this new page (all text from the body)
+            const pageContent = await scrapePageContent(newPage);
+            allContent.push(pageContent);
 
-          await newPage.close(); // Close the page after scraping
+            await newPage.close(); // Close the page after scraping
+          } catch (newPageError) {
+            console.error(`Error scraping page ${absoluteLink}:`, newPageError.message);
+          }
         }
       }
     }
