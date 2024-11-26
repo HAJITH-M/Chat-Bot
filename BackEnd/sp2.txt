@@ -1,0 +1,186 @@
+const express = require('express');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const url = require('url'); // To parse URLs
+const cors = require('cors');
+
+// Enable Puppeteer Stealth Plugin to bypass detection
+puppeteer.use(StealthPlugin());
+
+const app = express();
+const port = 5000;
+
+app.use(cors());
+app.use(express.json());
+
+// Utility function to resolve relative URLs to absolute
+const resolveUrl = (base, relative) => {
+  return url.resolve(base, relative);
+};
+
+// Function to extract all internal links from the page
+const getLinksFromPage = async (page) => {
+  return await page.evaluate(() => {
+    const links = Array.from(document.querySelectorAll('a'));
+    console.log("Extracted links from the page: ", links.map(link => link.href));
+    return links
+      .map((link) => link.href)
+      .filter((href) => href && href.startsWith(window.location.origin)); // Only internal links
+  });
+};
+
+// Function to scrape the text content of the page
+const scrapePageContent = async (page) => {
+  try {
+    let retries = 3;
+    let content = '';
+
+    while (retries > 0) {
+      try {
+        await page.waitForSelector('body', { timeout: 120000 });
+
+        // Wait a bit before scraping
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // Optionally wait for the loader to disappear, if there's one
+        await page.waitForSelector('.loading', { hidden: true, timeout: 5000 }).catch(() => {});
+
+        content = await page.evaluate(() => {
+          const bodyContent = document.body.innerText;
+          return bodyContent.trim();
+        });
+
+        if (content) {
+          break; // If content is found, exit the loop
+        }
+
+        await page.reload({ waitUntil: 'networkidle2' });
+        retries--;
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait a bit before retrying
+
+      } catch (error) {
+        retries--;
+        if (retries === 0) throw error;
+        await page.reload({ waitUntil: 'networkidle2' });
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait a bit before retrying
+      }
+    }
+
+    return content;
+  } catch (error) {
+    console.error('Error: Content did not load in time or could not be extracted.', error);
+    return '';
+  }
+};
+
+app.post('/scrape', async (req, res) => {
+  const { url: targetUrl } = req.body;
+  console.log(`Starting scrape on: ${targetUrl}`);
+  let browser;
+
+  try {
+    // Launch Puppeteer browser instance with Stealth Plugin
+    browser = await puppeteer.launch({
+      headless: false, // Set to true for headless mode
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      slowMo: 50, // Slow down the browser to make debugging easier
+    });
+
+    const page = await browser.newPage();
+
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
+    let retries = 3;
+    let response;
+
+    while (retries > 0) {
+      response = await page.goto(targetUrl, { waitUntil: 'load', timeout: 120000 }); // Increased timeout
+      if (response && response.status() === 200) break;
+
+      retries--;
+      if (retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait a bit before retrying
+        await page.reload({ waitUntil: 'load' });
+      }
+    }
+
+    if (response && response.status() !== 200) {
+      console.log(`Failed to load page: ${targetUrl} with status: ${response.status()}`);
+      await browser.close();
+      return res.status(500).json({ content: ['Failed to load page.'] });
+    }
+
+    await page.waitForSelector('body', { timeout: 120000 }); // Increased timeout
+
+    let links = await getLinksFromPage(page);
+    console.log('Found links:', links);
+
+    let allContent = [];
+    let visited = new Set();
+
+    const mainPageContent = await scrapePageContent(page);
+    allContent.push(mainPageContent);
+
+    for (let link of links) {
+      if (!visited.has(link)) {
+        visited.add(link);
+        const absoluteLink = resolveUrl(targetUrl, link);
+
+        const parsedLink = url.parse(absoluteLink);
+        if (parsedLink.hostname === url.parse(targetUrl).hostname) {
+          try {
+            const newPage = await browser.newPage();
+            await newPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
+            let retries = 3;
+            let newPageResponse;
+
+            while (retries > 0) {
+              newPageResponse = await newPage.goto(absoluteLink, { waitUntil: 'load', timeout: 120000 }); // Increased timeout
+              if (newPageResponse && newPageResponse.status() === 200) break;
+
+              retries--;
+              if (retries > 0) {
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait a bit before retrying
+                await newPage.reload({ waitUntil: 'load' });
+              }
+            }
+
+            if (newPageResponse && newPageResponse.status() !== 200) {
+              console.log(`Failed to load internal link: ${absoluteLink}`);
+              await newPage.close();
+              continue;
+            }
+
+            const pageContent = await scrapePageContent(newPage);
+            allContent.push(pageContent);
+
+            await newPage.close();
+          } catch (newPageError) {
+            console.error(`Error scraping page ${absoluteLink}:`, newPageError.message);
+          }
+        }
+      }
+    }
+
+    if (allContent.length === 0) {
+      console.log('No content found on the pages.');
+      await browser.close();
+      return res.status(200).json({ content: ['No content found on the pages.'] });
+    }
+
+    await browser.close();
+    res.json({ content: allContent });
+
+  } catch (error) {
+    console.error('Error during scraping:', error.message);
+    if (browser) {
+      await browser.close();
+    }
+    res.status(500).json({ content: ['Error occurred while scraping the site.'] });
+  }
+});
+
+app.listen(port, () => {
+  console.log(`Server running on http://localhost:${port}`);
+});

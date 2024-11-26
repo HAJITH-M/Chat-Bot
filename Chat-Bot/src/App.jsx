@@ -13,35 +13,38 @@ const App = () => {
       setError('Please enter a valid URL');
       return; // Prevent request if the URL is empty
     }
-  
+
     setError(''); // Clear any previous errors
     setLoading(true); // Show loading indicator
     console.log('Sending request with URL:', message); // Log the URL being sent
-  
+
     try {
       // Send URL to backend for scraping
       const res = await axios.post('http://localhost:5000/scrape', {
         url: message,
       });
-  
+
       console.log('Received response:', res.data);  // Log the response from the server
-      setResponse(res.data.content.join('\n')); // Display the scraped content
+
+      // Check if the response contains valid content
+      if (Array.isArray(res.data.scrapedContent)) {
+        const formattedResponse = res.data.scrapedContent.map((item, index) => (
+          `<strong>Page ${index + 1}: ${item.url}</strong><br /><br />${item.content}<br /><br />`
+        )).join('');
+
+        setResponse(formattedResponse);
+      } else {
+        setResponse('No valid content found.');
+      }
+
     } catch (error) {
       console.error('Error during API call:', error); // Log any errors
-      if (error.response) {
-        console.error('Error response:', error.response.data);
-      } else if (error.request) {
-        console.error('Error request:', error.request);
-      } else {
-        console.error('Error message:', error.message);
-      }
       setError('Error while scraping. Please try again later.');
       setResponse(''); // Clear the previous response if there's an error
     } finally {
       setLoading(false); // Hide loading indicator
     }
   };
-  
 
   return (
     <div className="App">
@@ -65,7 +68,7 @@ const App = () => {
       {/* Display scraped content or an error message */}
       <div>
         <p>Response:</p>
-        <pre>{response}</pre>
+        <div dangerouslySetInnerHTML={{ __html: response }} />
       </div>
     </div>
   );
